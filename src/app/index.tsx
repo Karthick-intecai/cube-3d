@@ -1,98 +1,60 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
+import { Image } from 'expo-image';
+import { router } from 'expo-router';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
-
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
+export default function WelcomeScreen() {
     return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
+        <SafeAreaView style={styles.safe}>
+            <View style={styles.hero}>
+                <Image
+                    source={require('../../assets/images/logo-glow.png')}
+                    style={styles.image}
+                    contentFit="contain"
+                />
+                <Text style={styles.logo}>CUBE 3D</Text>
+                <Text style={styles.tag}>SCAN IT • SOLVE IT • PLAY IT</Text>
+            </View>
+
+            <View style={styles.options}>
+                <Pressable style={styles.card} onPress={() => router.push('/physical')}>
+                    <Text style={styles.cardIcon}>◉</Text>
+                    <View>
+                        <Text style={styles.cardTitle}>Physical Cube</Text>
+                        <Text style={styles.cardSub}>Scan or enter colors, get steps</Text>
+                    </View>
+                </Pressable>
+                <Pressable style={styles.card} onPress={() => router.push('/virtual')}>
+                    <Text style={styles.cardIcon}>▦</Text>
+                    <View>
+                        <Text style={styles.cardTitle}>Virtual Cube</Text>
+                        <Text style={styles.cardSub}>2x2 • 3x3 • 4x4 • Pyraminx</Text>
+                    </View>
+                </Pressable>
+            </View>
+        </SafeAreaView>
     );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
-
-export default function HomeScreen() {
-  return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
-
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
-
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
-
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
-  );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
-  },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
-  },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
-  },
-  title: {
-    textAlign: 'center',
-  },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
-  },
+    safe: { flex: 1, backgroundColor: '#0b0e17', paddingHorizontal: 20, gap: 16 },
+    hero: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 8 },
+    image: { width: 220, height: 220 },
+    logo: { color: '#f2f6ff', fontSize: 42, fontWeight: '800', letterSpacing: 6, lineHeight: 48 },
+    tag: { color: '#5eead4', fontSize: 12, fontWeight: '700', letterSpacing: 3 },
+    options: { gap: 12, paddingBottom: 16 },
+    card: {
+        backgroundColor: '#141a2e',
+        borderColor: '#2dd4bf',
+        borderWidth: 1,
+        borderRadius: 18,
+        paddingVertical: 20,
+        paddingHorizontal: 18,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 14,
+    },
+    cardIcon: { color: '#5eead4', fontSize: 30, fontWeight: '700' },
+    cardTitle: { color: '#f2f6ff', fontSize: 20, fontWeight: '800' },
+    cardSub: { color: '#7c8ab0', fontSize: 13, fontWeight: '600', marginTop: 2 },
 });
