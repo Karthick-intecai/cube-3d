@@ -1,31 +1,86 @@
 // src/three/PyraMesh.tsx
 import { useMemo } from 'react';
 import * as THREE from 'three';
-import { baseQuatFor, homeLayout, homeTriangleLocal, PyraSticker, VERTICES } from '../pyraminx/geometry';
+import { homeLayout, homeTriangleLocal, PyraSticker, VERTICES } from '../pyraminx/geometry';
 
-let geoms: THREE.BufferGeometry[] | null = null;
-const matsCache = new Map<string, THREE.MeshStandardMaterial>();
+// Real speedcube look: raised tile caps with panel gaps, glossy plastic.
+const INSET = 0.86; // shrink toward centroid -> black seams
+const TILE_DEPTH = 0.035;
+const TILE_LIFT = 0.004;
+const BEVEL = 0.006;
 
-function getGeoms(): THREE.BufferGeometry[] {
-    if (!geoms) {
-        geoms = homeTriangleLocal().map((corners) => {
-            const g = new THREE.BufferGeometry();
-            const v = new Float32Array(corners.flatMap((c) => [c.x, c.y, c.z]));
-            g.setAttribute('position', new THREE.BufferAttribute(v, 3));
-            g.computeVertexNormals();
-            return g;
-        });
-    }
-    return geoms;
+let tiles: THREE.BufferGeometry[] | null = null;
+const matsCache = new Map<string, THREE.MeshPhysicalMaterial>();
+
+/** Extruded, beveled tile from world-oriented home corners (centered). */
+export function buildTileGeometry(
+    corners: THREE.Vector3[],
+    homeNormal: THREE.Vector3
+): { geometry: THREE.BufferGeometry; quat: THREE.Quaternion } {
+    const center = new THREE.Vector3()
+        .add(corners[0]).add(corners[1]).add(corners[2])
+        .multiplyScalar(1 / 3);
+    const inset = corners.map((c) =>
+        c.clone().sub(center).multiplyScalar(INSET).add(center)
+    );
+    // Local 2D frame in the tile plane, n forced outward.
+    const u = inset[0].clone().sub(center).normalize();
+    let n = new THREE.Vector3().crossVectors(
+        inset[0].clone().sub(center),
+        inset[1].clone().sub(center)
+    ).normalize();
+    if (n.dot(homeNormal) < 0) n.negate();
+    const v = new THREE.Vector3().crossVectors(n, u).normalize();
+    const to2D = (p: THREE.Vector3) =>
+        new THREE.Vector2(p.clone().sub(center).dot(u), p.clone().sub(center).dot(v));
+    const shape = new THREE.Shape([to2D(inset[0]), to2D(inset[1]), to2D(inset[2])]);
+    const g = new THREE.ExtrudeGeometry(shape, {
+        depth: TILE_DEPTH,
+        bevelEnabled: true,
+        bevelThickness: BEVEL,
+        bevelSize: BEVEL * 0.85,
+        bevelSegments: 2,
+        steps: 1,
+    });
+    // Basis (u, v, n) is right-handed by construction; tile faces +Z.
+    g.computeVertexNormals();
+    // Center the tile on its face plane + lift slightly off the core.
+    g.translate(0, 0, -TILE_DEPTH / 2 + TILE_LIFT);
+    return { geometry: g, quat: new THREE.Quaternion().setFromRotationMatrix(
+        new THREE.Matrix4().makeBasis(u, v, n)
+    ) };
 }
 
-function getMat(color: string): THREE.MeshStandardMaterial {
+interface Tile {
+    geometry: THREE.BufferGeometry;
+    quat: THREE.Quaternion;
+}
+
+let tileCache: Tile[] | null = null;
+
+function getTiles(): Tile[] {
+    if (!tileCache) {
+        const home = homeLayout().stickers;
+        tileCache = homeTriangleLocal().map((corners, id) => {
+            const { geometry, quat } = buildTileGeometry(
+                corners,
+                new THREE.Vector3(...home[id].normal)
+            );
+            return { geometry, quat };
+        });
+    }
+    return tileCache;
+}
+
+function getMat(color: string): THREE.MeshPhysicalMaterial {
     let m = matsCache.get(color);
     if (!m) {
-        m = new THREE.MeshStandardMaterial({
+        m = new THREE.MeshPhysicalMaterial({
             color,
-            roughness: 0.35,
-            metalness: 0.05,
+            roughness: 0.32,
+            metalness: 0.0,
+            clearcoat: 0.7,
+            clearcoatRoughness: 0.25,
             side: THREE.DoubleSide,
         });
         matsCache.set(color, m);
@@ -35,9 +90,10 @@ function getMat(color: string): THREE.MeshStandardMaterial {
 
 export function PyraMesh({ sticker }: { sticker: PyraSticker }) {
     const renderQuat = useMemo(() => {
-        const home = homeLayout().stickers[sticker.id];
-        const base = baseQuatFor(home.normal);
-        const q = new THREE.Quaternion(...sticker.quaternion).multiply(base);
+        // Tile shape is baked in world orientation; mesh rotation is the
+        // accumulated turn rotation composed with the tile's base frame.
+        const tile = getTiles()[sticker.id];
+        const q = new THREE.Quaternion(...sticker.quaternion).multiply(tile.quat);
         return [q.x, q.y, q.z, q.w] as [number, number, number, number];
     }, [sticker]);
 
@@ -46,7 +102,7 @@ export function PyraMesh({ sticker }: { sticker: PyraSticker }) {
             userData={{ stickerId: sticker.id }}
             position={sticker.pos}
             quaternion={renderQuat}
-            geometry={getGeoms()[sticker.id]}
+            geometry={getTiles()[sticker.id].geometry}
             material={getMat(sticker.color)}
         />
     );

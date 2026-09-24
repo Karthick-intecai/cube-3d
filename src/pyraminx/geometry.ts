@@ -29,25 +29,52 @@ export const TURN_MS = 220;
 export const SCRAMBLE_TURNS = 14;
 
 // Regular tetrahedron, apex up, front edge facing +Z.
-// Recentered so the centroid is at the origin: that puts every
-// vertex-to-centroid 3-fold symmetry axis through the origin, which
-// is what turn rotations rely on.
-const RAW: Vec3[] = [
-    [0, 1.16, 0],
-    [-1.2, -0.8, 0.693],
-    [1.2, -0.8, 0.693],
-    [0, -0.8, -1.385],
+// Built from the EXACT (±1,±1,±1) tetrahedron (all edges 2√2) rotated
+// into place. Hand-rounded decimals here previously broke exact
+// 3-fold symmetry (~3e-4 error), which broke rotation-based matching.
+// All construction below introduces only ~1e-16 float error.
+const RAW_EXACT: Vec3[] = [
+    [1, 1, 1],
+    [1, -1, -1],
+    [-1, 1, -1],
+    [-1, -1, 1],
 ];
-const CENTROID: Vec3 = [
-    (RAW[0][0] + RAW[1][0] + RAW[2][0] + RAW[3][0]) / 4,
-    (RAW[0][1] + RAW[1][1] + RAW[2][1] + RAW[3][1]) / 4,
-    (RAW[0][2] + RAW[1][2] + RAW[2][2] + RAW[3][2]) / 4,
-];
-const recenter = (v: Vec3): Vec3 => [v[0] - CENTROID[0], v[1] - CENTROID[1], v[2] - CENTROID[2]];
-const U = recenter(RAW[0]);
-const L = recenter(RAW[1]);
-const R = recenter(RAW[2]);
-const B = recenter(RAW[3]);
+function orientTetra(): Vec3[] {
+    const pts = RAW_EXACT.map(
+        (v) => new THREE.Vector3(v[0], v[1], v[2])
+    );
+    // Apex: vertex 0 -> +Y.
+    const r1 = new THREE.Quaternion().setFromUnitVectors(
+        pts[0].clone().normalize(),
+        new THREE.Vector3(0, 1, 0)
+    );
+    pts.forEach((p) => p.applyQuaternion(r1));
+    // Yaw: vertex with min z -> back (-Z), others symmetric front.
+    let bi = 1;
+    for (let i = 2; i < 4; i++) {
+        if (pts[i].z < pts[bi].z) bi = i;
+    }
+    const yaw = Math.PI - Math.atan2(pts[bi].x, pts[bi].z);
+    const r2 = new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0),
+        yaw
+    );
+    pts.forEach((p) => p.applyQuaternion(r2));
+    // Label: apex U, back B (-x? no: min-z), +x R, -x L.
+    const order = [0];
+    const rest = [1, 2, 3].filter((i) => i !== bi);
+    // Of the two front vertices, +x is R.
+    rest.sort((a, b) => pts[a].x - pts[b].x);
+    const L = rest[0], R = rest[1];
+    const V: Record<string, THREE.Vector3> = { U: pts[0], L: pts[L], R: pts[R], B: pts[bi] };
+    const out = (v: THREE.Vector3): Vec3 => [v.x, v.y, v.z];
+    return [out(V.U), out(V.L), out(V.R), out(V.B)];
+}
+const ORIENTED = orientTetra();
+const U: Vec3 = ORIENTED[0];
+const L: Vec3 = ORIENTED[1];
+const R: Vec3 = ORIENTED[2];
+const B: Vec3 = ORIENTED[3];
 
 export const VERTICES: Vec3[] = [U, L, R, B];
 

@@ -87,14 +87,14 @@ export function cubiesToSolverState(cubies: Cubie[], size = 3): string {
 /**
  * Parse solution/scramble notation ("R U' F2 r b' M E2 S") into layer turns.
  * Uppercase = single outer layer. Lowercase = wide turn (outer + middle).
- * M/E/S = middle slices (follow L/D/F directions).
+ * M/E/S = middle slices (follow L/D/F directions, 3x3 only).
  */
-export function parseMoves(notation: string): LayerTurn[] {
+export function parseMoves(notation: string, size = 3): LayerTurn[] {
     const moves: LayerTurn[] = [];
     const push = (axisIdx: 0 | 1 | 2, layers: number[], prime: boolean, double: boolean) => {
         for (const layer of layers) {
-            moves.push({ axisIdx, layer: layer as -1 | 0 | 1, prime });
-            if (double) moves.push({ axisIdx, layer: layer as -1 | 0 | 1, prime });
+            moves.push({ axisIdx, layer, prime });
+            if (double) moves.push({ axisIdx, layer, prime });
         }
     };
     // Middle-slice base directions (follow L / D / F respectively).
@@ -113,8 +113,9 @@ export function parseMoves(notation: string): LayerTurn[] {
         if ('RLUDFB'.includes(upper)) {
             const face = upper as FaceName;
             // faceToLayer encodes "clockwise viewed from outside".
-            const t = faceToLayer(face, suffixPrime);
-            const layers = ch === upper ? [t.layer] : [t.layer, 0];
+            const t = faceToLayer(face, suffixPrime, size);
+            const mid = t.layer > 0 ? t.layer - 1 : t.layer + 1;
+            const layers = ch === upper ? [t.layer] : [t.layer, size === 3 ? 0 : mid];
             push(t.axisIdx, layers, t.prime, double);
         } else if ('MES'.includes(upper)) {
             const base = middleBase[upper];

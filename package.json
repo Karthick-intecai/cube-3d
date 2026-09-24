@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "dependencies": {
     "@expo/ui": "~57.0.19",
+    "@expo/vector-icons": "^15.1.1",
     "@react-three/drei": "^10.7.8",
     "@react-three/fiber": "^9.8.0",
     "cube-solver": "^2.4.1",

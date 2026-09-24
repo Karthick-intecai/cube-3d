@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -22,7 +23,10 @@ export default function VirtualListScreen() {
         <SafeAreaView style={styles.safe}>
             <View style={styles.header}>
                 <Pressable style={styles.back} onPress={() => router.back()}>
-                    <Text style={styles.backText}>‹ Back</Text>
+                    <View style={styles.backRow}>
+                        <Ionicons name="chevron-back" size={20} color="#5eead4" />
+                        <Text style={styles.backText}>Back</Text>
+                    </View>
                 </Pressable>
                 <Text style={styles.title}>Choose your cube</Text>
             </View>
@@ -46,7 +50,7 @@ export default function VirtualListScreen() {
                             <Text style={styles.cardTitle}>{o.name}</Text>
                             <Text style={styles.cardSub}>{o.sub}</Text>
                         </View>
-                        <Text style={styles.chevron}>›</Text>
+                        <Ionicons name="chevron-forward" size={22} color="#7c8ab0" />
                     </Pressable>
                 ))}
             </View>
@@ -58,6 +62,7 @@ const styles = StyleSheet.create({
     safe: { flex: 1, backgroundColor: '#0b0e17', paddingHorizontal: 20, gap: 16 },
     header: { paddingTop: 8, gap: 8 },
     back: { alignSelf: 'flex-start', paddingVertical: 6, paddingRight: 12 },
+    backRow: { flexDirection: 'row', alignItems: 'center' },
     backText: { color: '#5eead4', fontSize: 16, fontWeight: '700' },
     title: { color: '#f2f6ff', fontSize: 30, fontWeight: '800', lineHeight: 36 },
     list: { gap: 12 },
@@ -85,5 +90,4 @@ const styles = StyleSheet.create({
     cardBody: { flex: 1 },
     cardTitle: { color: '#f2f6ff', fontSize: 18, fontWeight: '800' },
     cardSub: { color: '#7c8ab0', fontSize: 13, fontWeight: '600', marginTop: 2 },
-    chevron: { color: '#7c8ab0', fontSize: 22, fontWeight: '700' },
 });

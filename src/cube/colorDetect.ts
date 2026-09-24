@@ -116,6 +116,34 @@ function avgRegion(data: Uint8Array, w: number, x0: number, y0: number, x1: numb
     return { r: r / n, g: g / n, b: b / n };
 }
 
+/** Gray-world balance a set of samples, then classify each. */
+export function classifySamples(samples: RGB[]): string[] {
+    const mean = (f: (c: RGB) => number) =>
+        samples.reduce((a, c) => a + f(c), 0) / samples.length;
+    const gain = (m: number) => Math.max(0.5, Math.min(2, 128 / Math.max(1, m)));
+    const gr = gain(mean((c) => c.r)), gg = gain(mean((c) => c.g)), gb = gain(mean((c) => c.b));
+    const balanced = samples.map((c) => ({
+        r: Math.min(255, c.r * gr),
+        g: Math.min(255, c.g * gg),
+        b: Math.min(255, c.b * gb),
+    }));
+    const refs = REF_HEX.map((hex) => {
+        const c = hexToRgb(hex);
+        return { hex, rgb: { r: Math.min(255, c.r * gr), g: Math.min(255, c.g * gg), b: Math.min(255, c.b * gb) } };
+    });
+    return balanced.map((s) => {
+        const { s: sat } = rgbToHsv(s.r, s.g, s.b);
+        if (sat < 0.18) return COLORS.U;
+        let best = refs[0].hex;
+        let bestD = Infinity;
+        for (const ref of refs) {
+            const d = colorDistance(s, ref.rgb);
+            if (d < bestD) { bestD = d; best = ref.hex; }
+        }
+        return best;
+    });
+}
+
 /**
  * Detect sticker colors from a square face image (any size).
  * Cells are sampled at their centers (seams avoided), gray-world
@@ -133,30 +161,46 @@ export function detectFace(data: Uint8Array, w: number, h: number, n = 3): strin
             samples.push(avgRegion(data, w, x0, y0, Math.min(w, x1), Math.min(h, y1)));
         }
     }
-    // Gray-world white balance from the 9 samples.
-    const mean = (f: (c: RGB) => number) =>
-        samples.reduce((a, c) => a + f(c), 0) / samples.length;
-    const gain = (m: number) => Math.max(0.5, Math.min(2, 128 / Math.max(1, m)));
-    const gr = gain(mean((c) => c.r)), gg = gain(mean((c) => c.g)), gb = gain(mean((c) => c.b));
-    const balanced = samples.map((c) => ({
-        r: Math.min(255, c.r * gr),
-        g: Math.min(255, c.g * gg),
-        b: Math.min(255, c.b * gb),
-    }));
-    // Classify against equally-balanced references.
-    const refs = REF_HEX.map((hex) => {
-        const c = hexToRgb(hex);
-        return { hex, rgb: { r: Math.min(255, c.r * gr), g: Math.min(255, c.g * gg), b: Math.min(255, c.b * gb) } };
+    return classifySamples(samples);
+}
+
+export interface Tri {
+    ax: number; ay: number;
+    bx: number; by: number;
+    cx: number; cy: number;
+}
+
+/**
+ * Detect 9 sticker colors of a triangular pyraminx face.
+ * tri = face triangle in image pixels (apex A top, base BL/BR bottom),
+ * matching the entry orientation (P0=apex, P1=right, P2=left).
+ * Returns hexes in faceCells order (6 up, then 3 down).
+ */
+export function detectPyra(
+    data: Uint8Array, w: number, h: number,
+    tri: Tri
+): string[] {
+    const L = (i: number, j: number) => ({
+        x: tri.ax + ((tri.cx - tri.ax) * i + (tri.bx - tri.ax) * j) / 3,
+        y: tri.ay + ((tri.cy - tri.ay) * i + (tri.by - tri.ay) * j) / 3,
     });
-    return balanced.map((s) => {
-        const { s: sat } = rgbToHsv(s.r, s.g, s.b);
-        if (sat < 0.18) return COLORS.U;
-        let best = refs[0].hex;
-        let bestD = Infinity;
-        for (const ref of refs) {
-            const d = colorDistance(s, ref.rgb);
-            if (d < bestD) { bestD = d; best = ref.hex; }
-        }
-        return best;
-    });
+    const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+    const sampleCell = (corners: { x: number; y: number }[]): RGB => {
+        const cx = (corners[0].x + corners[1].x + corners[2].x) / 3;
+        const cy = (corners[0].y + corners[1].y + corners[2].y) / 3;
+        const r = 4;
+        return avgRegion(
+            data, w,
+            clamp(Math.floor(cx - r), 0, w - 1), clamp(Math.floor(cy - r), 0, h - 1),
+            clamp(Math.ceil(cx + r), 1, w), clamp(Math.ceil(cy + r), 1, h)
+        );
+    };
+    const up = (i: number, j: number) => sampleCell([L(i, j), L(i + 1, j), L(i, j + 1)]);
+    const down = (i: number, j: number) =>
+        sampleCell([L(i + 1, j), L(i, j + 1), L(i + 1, j + 1)]);
+    const samples = [
+        up(0, 0), up(1, 0), up(0, 1), up(2, 0), up(1, 1), up(0, 2),
+        down(0, 0), down(1, 0), down(0, 1),
+    ];
+    return classifySamples(samples);
 }

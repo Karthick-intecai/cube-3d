@@ -1,171 +1,87 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSoundEffects } from '@/audio/useSoundEffects';
-import { commitLayerTurn } from '@/cube/turns';
-import { createSolvedCube } from '@/cube/createCube';
-import { Cubie, LayerTurn } from '@/cube/types';
-import { parseMoves } from '@/cube/facelets';
-import { stateToCubies } from '@/cube/reconstruct';
-import { embed2x2In3x3, mapMovesTo2x2 } from '@/cube/twoByTwo';
-import { FaceKey } from '@/cube/validate';
 import { useHaptics } from '@/haptics/useHaptics';
-import { SolutionScene } from '@/three/SolutionScene';
-
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const solver = require('rubiks-cube-solver');
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const CubeJs = require('cubejs');
-
-const pretty = (s: string) => s.replace(/prime/g, "'");
+import {
+    commitPyraTurn,
+    PyraSticker,
+    PyraTurn,
+    turnNotation,
+} from '@/pyraminx/geometry';
+import { solvePyraminx, stateToPyraStickers } from '@/pyraminx/solver';
+import { PyraSolutionScene } from '@/three/PyraSolutionScene';
 
 interface PlayStep {
-    turn: LayerTurn;
+    turn: PyraTurn;
     label: string;
     phase: string;
 }
 
 interface Built {
-    initial: Cubie[];
+    initial: PyraSticker[];
     steps: PlayStep[];
 }
 
-let kociembaReady = false;
-
-function buildSolution(state: string, size: 2 | 3 | 4, moves?: string, scramble?: string): Built {
-    if (size === 4) {
-        // No 4x4 auto-solver yet: replay caller-provided scramble to get the
-        // exact initial state, then play the known solution moves.
-        if (!moves || !moves.trim() || !scramble || !scramble.trim()) {
-            throw new Error('No 4×4 solution available.');
-        }
-        let initial = createSolvedCube(4);
-        for (const tok of scramble.trim().split(/\s+/).filter(Boolean)) {
-            for (const turn of parseMoves(tok, 4)) {
-                initial = commitLayerTurn(initial, turn);
-            }
-        }
-        const steps: PlayStep[] = [];
-        for (const tok of moves.trim().split(/\s+/).filter(Boolean)) {
-            for (const turn of parseMoves(tok, 4)) {
-                steps.push({ turn, label: pretty(tok), phase: 'Solution' });
-            }
-        }
-        return { initial, steps };
-    }
-    if (size === 2) {
-        // 2x2 corners embedded in a 3x3, solved with Kociemba (short),
-        // moves mapped back onto the 2x2 (middle slices don't move corners).
-        const initial = stateToCubies(state, 2);
-        const letters: Record<string, string[]> = {};
-        (['F', 'R', 'U', 'D', 'L', 'B'] as const).forEach((f, i) => {
-            letters[f] = [...state.slice(i * 4, i * 4 + 4)];
-        });
-        const emb = embed2x2In3x3(letters as Record<FaceKey, string[]>);
-        const E: Record<string, string> = {};
-        (['F', 'R', 'U', 'D', 'L', 'B'] as const).forEach((f, i) => {
-            E[f] = emb.slice(i * 9, i * 9 + 9);
-        });
-        if (!kociembaReady) {
-            CubeJs.initSolver();
-            kociembaReady = true;
-        }
-        const sol: string = CubeJs.fromString(
-            (E.U + E.R + E.F + E.D + E.L + E.B).toUpperCase()
-        ).solve();
-        if (!sol || !sol.trim()) throw new Error('No solution found.');
-        const steps: PlayStep[] = [];
-        for (const tok of sol.trim().split(/\s+/).filter(Boolean)) {
-            for (const turn of mapMovesTo2x2(parseMoves(tok))) {
-                steps.push({ turn, label: pretty(tok), phase: 'Solution' });
-            }
-        }
-        return { initial, steps };
-    }
-    const initial = stateToCubies(state);
-    const out = solver(state, { partitioned: true }) as {
-        cross: string[]; f2l: string[]; oll: string; pll: string;
-    };
-    if (!out || !out.cross) throw new Error('No solution found.');
-    const groups: { title: string; alg: string }[] = [
-        ...out.cross.map((alg, i) => ({ title: `Cross ${i + 1}/4`, alg })),
-        ...out.f2l.map((alg, i) => ({ title: `F2L pair ${i + 1}/4`, alg })),
-        { title: 'OLL — yellow top', alg: out.oll },
-        { title: 'PLL — finish', alg: out.pll },
-    ];
-    const steps: PlayStep[] = [];
-    for (const g of groups) {
-        for (const tok of g.alg.split(' ').filter(Boolean)) {
-            for (const turn of parseMoves(tok)) {
-                steps.push({ turn, label: pretty(tok), phase: g.title });
-            }
-        }
-    }
+function buildSolution(state: string): Built {
+    const initial = stateToPyraStickers(state);
+    const sol = solvePyraminx(initial);
+    const steps: PlayStep[] = sol.moves.map((turn, i) => ({
+        turn,
+        label: sol.labels[i],
+        phase: turn.wide ? 'Layers' : 'Tips',
+    }));
     return { initial, steps };
 }
 
-export default function SolveScreen() {
-    const { state, size, solution, scramble } = useLocalSearchParams<{
-        state?: string; size?: string; solution?: string; scramble?: string;
-    }>();
+export default function SolvePyraScreen() {
+    const { state } = useLocalSearchParams<{ state?: string }>();
     const stateParam = Array.isArray(state) ? state[0] : (state ?? '');
-    const sizeParam = Array.isArray(size) ? size[0] : (size ?? '3');
-    const movesParam = Array.isArray(solution) ? solution[0] : solution;
-    const scrambleParam = Array.isArray(scramble) ? scramble[0] : scramble;
-    const cubeSize: 2 | 3 | 4 = sizeParam === '2' ? 2 : sizeParam === '4' ? 4 : 3;
 
     const [built, setBuilt] = useState<Built | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [status, setStatus] = useState('Building your solution…');
 
-    const [cubies, setCubies] = useState<Cubie[]>([]);
+    const [stickers, setStickers] = useState<PyraSticker[]>([]);
     const [stepIdx, setStepIdx] = useState(0);
-    const [active, setActive] = useState<LayerTurn | null>(null);
+    const [active, setActive] = useState<PyraTurn | null>(null);
     const [playing, setPlaying] = useState(false);
     const dirRef = useRef<'fwd' | 'back'>('fwd');
 
     const sfx = useSoundEffects();
     const haptics = useHaptics();
 
-    // Build once per state (solver blocks ~100-500ms; defer past first paint).
+    // Build once per state (PDB builds ~100-200ms once; defer past paint).
     useEffect(() => {
         setBuilt(null);
         setError(null);
-        setStatus(
-            cubeSize === 2 && !kociembaReady
-                ? 'Preparing 2×2 solver (one-time setup)…'
-                : 'Building your solution…'
-        );
         const t = setTimeout(() => {
             try {
-                setBuilt(buildSolution(stateParam, cubeSize, movesParam, scrambleParam));
+                setBuilt(buildSolution(stateParam));
             } catch (e: any) {
                 setError(e?.message ?? 'Could not build a solution for this state.');
             }
         }, 60);
         return () => clearTimeout(t);
-    }, [stateParam, cubeSize, movesParam, scrambleParam]);
+    }, [stateParam]);
 
     useEffect(() => {
         if (built) {
-            setCubies(built.initial);
+            setStickers(built.initial);
             setStepIdx(0);
             setActive(null);
             setPlaying(false);
         }
     }, [built]);
 
-    const moves = useMemo(() => built?.steps ?? [], [built]);
+    const moves = built?.steps ?? [];
     const done = built !== null && stepIdx >= moves.length;
 
     const commitActive = () => {
         if (!active) return;
-        // `active` already holds the exact turn to apply: the forward move
-        // for Next, the pre-inverted move for Prev. Apply as-is — flipping
-        // here again would re-apply the forward turn and corrupt the cube.
-        setCubies((prev) => commitLayerTurn(prev, active));
+        // `active` already holds the exact turn (pre-inverted for Prev).
+        setStickers((prev) => commitPyraTurn(prev, active));
         setStepIdx((i) => (dirRef.current === 'fwd' ? i + 1 : i - 1));
         setActive(null);
         sfx.turn();
@@ -184,10 +100,9 @@ export default function SolveScreen() {
         setActive({ ...t, prime: !t.prime });
     };
 
-    // Auto-play: chain the next move shortly after each landing.
     useEffect(() => {
         if (!playing || active || !built || stepIdx >= moves.length) return;
-        const t = setTimeout(startNext, 550);
+        const t = setTimeout(startNext, 650);
         return () => clearTimeout(t);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [playing, active, stepIdx, built]);
@@ -200,7 +115,7 @@ export default function SolveScreen() {
     const doPrev = () => { setPlaying(false); startPrev(); };
     const doRestart = () => {
         if (!built) return;
-        setCubies(built.initial);
+        setStickers(built.initial);
         setStepIdx(0);
         setActive(null);
         setPlaying(false);
@@ -233,22 +148,22 @@ export default function SolveScreen() {
                     ) : (
                         <>
                             <ActivityIndicator size="large" color="#2dd4bf" />
-                            <Text style={styles.note}>{status}</Text>
+                            <Text style={styles.note}>Building your solution…</Text>
                         </>
                     )}
                 </View>
             ) : (
                 <>
                     <View style={styles.stage}>
-                        <SolutionScene cubies={cubies} active={active} onDone={commitActive} />
+                        <PyraSolutionScene stickers={stickers} active={active} onDone={commitActive} />
                         {done && (
                             <View style={styles.doneWrap} pointerEvents="box-none">
                                 <View style={styles.doneCard}>
-                                    <View style={styles.doneTitleRow}>
-                                        <Text style={styles.doneTitle}>Solved</Text>
-                                        <Ionicons name="checkmark-circle" size={20} color="#5eead4" />
-                                    </View>
-                                    <Text style={styles.note}>Mirror each move on your real cube.</Text>
+                                <View style={styles.doneTitleRow}>
+                                    <Text style={styles.doneTitle}>Solved</Text>
+                                    <Ionicons name="checkmark-circle" size={20} color="#5eead4" />
+                                </View>
+                                    <Text style={styles.note}>Mirror each move on your real pyraminx.</Text>
                                 </View>
                             </View>
                         )}
@@ -266,8 +181,8 @@ export default function SolveScreen() {
                             <View style={[styles.barEmpty, { flex: 1 - progress }]} />
                         </View>
                         <Text style={styles.note}>
-                            Step {Math.min(stepIdx + 1, moves.length)} of {moves.length} • Hold your cube
-                            white-top, green-front
+                            Step {Math.min(stepIdx + 1, moves.length)} of {moves.length} • Hold white-top
+                            equivalent: apex up, green front
                         </Text>
                     </View>
 
@@ -291,7 +206,7 @@ export default function SolveScreen() {
 
                     <View style={styles.controls}>
                         <Pressable
-                            style={[styles.secondary, styles.flex, (active || stepIdx <= 0) && styles.disabled]}
+                            style={[styles.secondary, styles.flex, (!!active || stepIdx <= 0) && styles.disabled]}
                             disabled={!!active || stepIdx <= 0}
                             onPress={doPrev}
                         >
@@ -324,6 +239,9 @@ export default function SolveScreen() {
                     <Pressable style={styles.ghost} onPress={doRestart}>
                         <Text style={styles.ghostText}>Restart from the start</Text>
                     </Pressable>
+                    <Text style={styles.legend}>
+                        Drag background to orbit • U/L/R/B tips • w = two layers • ' = counter-clockwise
+                    </Text>
                 </>
             )}
         </SafeAreaView>
@@ -385,6 +303,7 @@ const styles = StyleSheet.create({
     disabled: { opacity: 0.45 },
     ghost: { alignItems: 'center', paddingVertical: 4 },
     ghostText: { color: '#5eead4', fontWeight: '700' },
+    legend: { color: '#7c8ab0', fontSize: 12, textAlign: 'center' },
     error: { color: '#f87171', fontSize: 14, fontWeight: '600', textAlign: 'center', lineHeight: 20 },
     doneWrap: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'flex-start', paddingTop: 12 },
     doneCard: {

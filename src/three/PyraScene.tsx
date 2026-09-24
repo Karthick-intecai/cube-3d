@@ -183,9 +183,11 @@ export function PyraScene({ onSwipeTurn, lockTurns = false }: Props) {
             <View style={StyleSheet.absoluteFill} collapsable={false}>
                 <Canvas camera={{ position: [0, 2.2, 7.6], fov: 40 }}>
                     <ContextBridge bridge={bridge} />
-                    <ambientLight intensity={0.9} />
-                    <directionalLight position={[6, 8, 5]} intensity={1.1} />
-                    <directionalLight position={[-6, -4, -5]} intensity={0.4} />
+                    <ambientLight intensity={0.45} />
+                    <hemisphereLight args={['#cdd8ff', '#14161f', 0.55]} />
+                    <directionalLight position={[6, 8, 5]} intensity={1.6} />
+                    <directionalLight position={[-7, 3, -6]} intensity={0.55} color="#9db8ff" />
+                    <directionalLight position={[-2, -5, 4]} intensity={0.3} />
 
                     <PyraCore />
 

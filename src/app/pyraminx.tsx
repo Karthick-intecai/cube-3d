@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -95,7 +96,10 @@ export default function PyraminxScreen() {
         <SafeAreaView style={styles.safe}>
             <View style={styles.header}>
                 <Pressable style={styles.back} onPress={() => router.back()}>
-                    <Text style={styles.backText}>‹ Cubes</Text>
+                    <View style={styles.backRow}>
+                        <Ionicons name="chevron-back" size={20} color="#5eead4" />
+                        <Text style={styles.backText}>Cubes</Text>
+                    </View>
                 </Pressable>
                 <Text style={styles.title}>Pyraminx</Text>
             </View>
@@ -109,18 +113,13 @@ export default function PyraminxScreen() {
             <View style={styles.statRow}>
                 <View style={styles.statCard}>
                     <ThemedText style={styles.statLabel}>MOVES</ThemedText>
-                    <ThemedText style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit>
+                    <ThemedText style={styles.statValue} numberOfLines={1}>
                         {historyLen}
                     </ThemedText>
                 </View>
                 <View style={[styles.statCard, styles.statusCard]}>
                     <ThemedText style={styles.statLabel}>STATUS</ThemedText>
-                    <ThemedText
-                        style={styles.statusValue}
-                        numberOfLines={1}
-                        adjustsFontSizeToFit
-                        minimumFontScale={0.6}
-                    >
+                    <ThemedText style={styles.statusValue} numberOfLines={1}>
                         {status}
                     </ThemedText>
                 </View>
@@ -149,16 +148,22 @@ export default function PyraminxScreen() {
                     onPress={doUndo}
                     disabled={!canUndo}
                 >
-                    <ThemedText style={styles.secondaryText} numberOfLines={1}>Undo</ThemedText>
+                    <View style={styles.btnRow}>
+                        <Ionicons name="arrow-undo" size={18} color="#dbe4ff" />
+                        <ThemedText style={styles.secondaryText} numberOfLines={1}>Undo</ThemedText>
+                    </View>
                 </Pressable>
                 <Pressable
                     style={[styles.primary, styles.controlFlex, scrambling && styles.disabled]}
                     onPress={doPauseResume}
                     disabled={scrambling}
                 >
-                    <ThemedText style={styles.primaryText} numberOfLines={1}>
-                        {paused ? 'Play' : 'Pause'}
-                    </ThemedText>
+                    <View style={styles.btnRow}>
+                        <Ionicons name={paused ? 'play' : 'pause'} size={18} color="#fff" />
+                        <ThemedText style={styles.primaryText} numberOfLines={1}>
+                            {paused ? 'Play' : 'Pause'}
+                        </ThemedText>
+                    </View>
                 </Pressable>
             </View>
         </SafeAreaView>
@@ -169,6 +174,7 @@ const styles = StyleSheet.create({
     safe: { flex: 1, backgroundColor: '#0b0e17', paddingHorizontal: 16, gap: 12 },
     header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: 8 },
     back: { paddingVertical: 6, paddingRight: 8 },
+    backRow: { flexDirection: 'row', alignItems: 'center' },
     backText: { color: '#5eead4', fontSize: 16, fontWeight: '700' },
     title: { color: '#f2f6ff', fontSize: 22, fontWeight: '800' },
     timer: {
@@ -184,7 +190,7 @@ const styles = StyleSheet.create({
     statLabel: { color: '#7c8ab0', fontSize: 11, fontWeight: '800', letterSpacing: 2 },
     statValue: { color: '#f2f6ff', fontSize: 28, fontWeight: '700', fontVariant: ['tabular-nums'], lineHeight: 34 },
     statusCard: { borderColor: '#2dd4bf' },
-    statusValue: { color: '#5eead4', fontSize: 16, fontWeight: '800', letterSpacing: 1, lineHeight: 22 },
+    statusValue: { color: '#5eead4', fontSize: 14, fontWeight: '800', letterSpacing: 1, lineHeight: 20 },
     stage: {
         flex: 1, backgroundColor: '#101527', borderColor: '#232c4d',
         borderWidth: 1, borderRadius: 20, overflow: 'hidden',
@@ -193,6 +199,7 @@ const styles = StyleSheet.create({
     lastMove: { textAlign: 'center', color: '#5eead4', fontSize: 13, fontWeight: '700' },
     controls: { flexDirection: 'row', gap: 10, paddingBottom: 8 },
     controlFlex: { flex: 1 },
+    btnRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
     primary: {
         backgroundColor: '#3b82f6', borderRadius: 14, paddingVertical: 16,
         paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center',

@@ -1,8 +1,10 @@
-import { decodeJpegBase64, detectFace, overlayToImageCrop } from '@/cube/colorDetect';
+import { decodeJpegBase64, detectFace, detectPyra, overlayToImageCrop } from '@/cube/colorDetect';
 import { COLORS } from '@/cube/constants';
 import { stickerLetter } from '@/cube/facelets';
 import { findBadCorners2 } from '@/cube/twoByTwo';
 import { FaceKey, findBadPieces } from '@/cube/validate';
+import { findBadPyra, PyraFaceKey, pyraHex, pyraLetter } from '@/pyraminx/solver';
+import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { readAsStringAsync } from 'expo-file-system/legacy';
 import { Image } from 'expo-image';
@@ -43,31 +45,175 @@ const PALETTE: { hex: string; label: string }[] = [
 const GRID_W = 248;
 const GRID_GAP = 8;
 
-type CubeKind = 2 | 3 | 4;
-const KIND_LABEL: Record<CubeKind, string> = { 2: '2×2', 3: '3×3', 4: '4×4' };
+type CubeKind = 2 | 3 | 4 | 'pyra';
+const KIND_LABEL: Record<CubeKind, string> = { 2: '2×2', 3: '3×3', 4: '4×4', pyra: 'Pyra' };
 
-// Verified-solvable demo states (letter grids, F R U D L B order).
-const DEMOS: Record<2 | 3, string> = {
-    3: 'flulfbddrrudrruddldbbburrfbllffdrubfrludlubrflubfbfudl',
-    2: 'burulrlduurfdbdfrdlfbflb',
+// Pyraminx faces and colors (triangular faces, no fixed centers).
+const PYRA_FACES: PyraFaceKey[] = ['F', 'R', 'L', 'D'];
+const PYRA_FACE_COLOR: Record<PyraFaceKey, string> = {
+    F: '#009e60', R: '#c41e3a', L: '#0051ba', D: '#ffd500',
+};
+const PYRA_FACE_NAME: Record<PyraFaceKey, string> = {
+    F: 'Front (green)', R: 'Right (red)', L: 'Left (blue)', D: 'Down (yellow)',
+};
+const PYRA_GUIDE: Record<PyraFaceKey, string> = {
+    F: 'Apex up, green faces you.',
+    R: 'Apex up, red faces you.',
+    L: 'Apex up, blue faces you.',
+    D: 'Yellow faces you, blue corner at the top.',
+};
+const PYRA_PALETTE = [
+    { hex: '#009e60', label: 'F' },
+    { hex: '#c41e3a', label: 'R' },
+    { hex: '#0051ba', label: 'L' },
+    { hex: '#ffd500', label: 'D' },
+];
+// UI row-major order -> faceCells sticker index (row-major UI presentation).
+const PYRA_UI = [0, 1, 6, 2, 3, 7, 4, 8, 5];
+const PYRA_UP = [true, true, false, true, true, false, true, false, true];
+
+// Verified-solvable demo states (letter grids, F R U D L B / F R L D order).
+// 4x4 carries its known scramble+inverse (no 4x4 auto-solver yet).
+const DEMOS: Partial<Record<CubeKind, { state: string; solution?: string; scramble?: string }>> = {
+    3: { state: 'flulfbddrrudrruddldbbburrfbllffdrubfrludlubrflubfbfudl' },
+    2: { state: 'burulrlduurfdbdfrdlfbflb' },
+    4: {
+        state: 'uffllffllffldddbbfffbrrrbrrrrddfubbdbuudbuudfrrdrllufddrfddrulldfddrullfullfbuubluulbbbrbbbrruul',
+        solution: "L' F D' R B U' L F' U R'",
+        scramble: "R U' F L' U B' R' D F' L",
+    },
+    pyra: { state: 'frlrflrrlrfddldlddldddlrfdrfrffrlffl' },
 };
 
 function emptyFacesN(n: CubeKind): Record<FaceKey, string[]> {
     const o = {} as Record<FaceKey, string[]>;
+    const size = n === 'pyra' ? 3 : n;
     for (const f of FACE_ORDER) {
-        o[f] = Array.from({ length: n * n }, (_, i) =>
+        o[f] = Array.from({ length: size * size }, (_, i) =>
             n === 3 && i === 4 ? FACE_COLOR[f] : COLORS.U
         );
     }
     return o;
 }
 
+// Pyraminx entry faces (triangular, faceCells reading order).
+const PYRA_ORDER: PyraFaceKey[] = ['F', 'R', 'L', 'D'];
+
+/** Triangular sticker entry grid for pyraminx faces (row-major UI order). */
+function PyraEntryGrid({
+    colors,
+    onPaint,
+}: {
+    colors: string[];
+    onPaint: (stickerIdx: number) => void;
+}) {
+    const s = 60;
+    const h = Math.round(s * 0.87);
+    const colGap = 0;
+    // UI position -> faceCells sticker index + orientation.
+    const rows: { idx: number; up: boolean }[][] = [
+        [{ idx: 0, up: true }],
+        [
+            { idx: 1, up: true },
+            { idx: 6, up: false },
+            { idx: 2, up: true },
+        ],
+        [
+            { idx: 3, up: true },
+            { idx: 7, up: false },
+            { idx: 4, up: true },
+            { idx: 8, up: false },
+            { idx: 5, up: true },
+        ],
+    ];
+    return (
+        <View style={{ gap: 2, alignItems: 'center' }}>
+            {rows.map((row, r) => (
+                <View key={r} style={{ flexDirection: 'row', gap: colGap }}>
+                    {row.map((cell) => (
+                        <Pressable key={cell.idx} onPress={() => onPaint(cell.idx)}>
+                            <View
+                                style={
+                                    cell.up
+                                        ? {
+                                            width: 0, height: 0,
+                                            borderLeftWidth: s / 2, borderRightWidth: s / 2,
+                                            borderBottomWidth: h,
+                                            borderLeftColor: 'transparent',
+                                            borderRightColor: 'transparent',
+                                            borderBottomColor: colors[cell.idx],
+                                        }
+                                        : {
+                                            width: 0, height: 0,
+                                            borderLeftWidth: s / 2, borderRightWidth: s / 2,
+                                            borderTopWidth: h,
+                                            borderLeftColor: 'transparent',
+                                            borderRightColor: 'transparent',
+                                            borderTopColor: colors[cell.idx],
+                                        }
+                                }
+                            />
+                        </Pressable>
+                    ))}
+                </View>
+            ))}
+        </View>
+    );
+}
+
+/** Triangle outline guide for pyraminx scanning (apex top). */
+function TriOutline({
+    left,
+    top,
+    size,
+    label,
+}: {
+    left: number;
+    top: number;
+    size: number;
+    label: string;
+}) {
+    const A = { x: 0.5 * size, y: 0.06 * size };
+    const BL = { x: 0.08 * size, y: 0.9 * size };
+    const BR = { x: 0.92 * size, y: 0.9 * size };
+    const bar = (p1: { x: number; y: number }, p2: { x: number; y: number }, key: string) => {
+        const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+        const ang = (Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180) / Math.PI;
+        return (
+            <View
+                key={key}
+                style={{
+                    position: 'absolute',
+                    left: (p1.x + p2.x) / 2 - len / 2,
+                    top: (p1.y + p2.y) / 2 - 1.5,
+                    width: len,
+                    height: 3,
+                    borderRadius: 2,
+                    backgroundColor: '#2dd4bf',
+                    transform: [{ rotate: `${ang}deg` }],
+                }}
+            />
+        );
+    };
+    return (
+        <View pointerEvents="none" style={{ position: 'absolute', left, top, width: size, height: size }}>
+            {bar(BL, BR, 'b')}
+            {bar(A, BL, 'l')}
+            {bar(A, BR, 'r')}
+            <Text style={styles.overlayLabel}>{label}</Text>
+        </View>
+    );
+}
+
 export default function PhysicalScreen() {
     const [cubeType, setCubeType] = useState<CubeKind>(3);
     const [typeOpen, setTypeOpen] = useState(true);
     const n = cubeType;
-    const cellCount = n * n;
-    const cellSize = (GRID_W - (n - 1) * GRID_GAP) / n;
+    const isPyra = n === 'pyra';
+    const gridN = isPyra ? 3 : n;
+    const cellCount = gridN * gridN;
+    const cellSize = (GRID_W - (gridN - 1) * GRID_GAP) / gridN;
+    const entryFaces: FaceKey[] = isPyra ? ['F', 'R', 'L', 'D'] : [...FACE_ORDER];
 
     const [tab, setTab] = useState<'manual' | 'camera'>('manual');
     const [face, setFace] = useState<FaceKey>('F');
@@ -78,6 +224,9 @@ export default function PhysicalScreen() {
     });
     const [error, setError] = useState<string | null>(null);
     const [badFaces, setBadFaces] = useState<FaceKey[]>([]);
+    // Known inverse moves when the untouched demo was loaded (4x4 only).
+    const [demoMoves, setDemoMoves] = useState<string | null>(null);
+    const [demoScramble, setDemoScramble] = useState<string | null>(null);
 
     const [permission, requestPermission] = useCameraPermissions();
     const cameraRef = useRef<CameraView>(null);
@@ -101,6 +250,8 @@ export default function PhysicalScreen() {
             setError(null);
             setBadFaces([]);
             setScanError(null);
+            setDemoMoves(null);
+            setDemoScramble(null);
             setFace('F');
             setPhotoFace('F');
             touchedRef.current.clear();
@@ -126,39 +277,87 @@ export default function PhysicalScreen() {
         });
         setError(null);
         setBadFaces([]);
+        setDemoMoves(null); setDemoScramble(null); // edited after demo: known solution no longer valid
         // Beginner-friendly: move to the next face once this one is filled.
         if (painted) {
-            const idx = FACE_ORDER.indexOf(face);
-            if (idx < FACE_ORDER.length - 1) setFace(FACE_ORDER[idx + 1]);
+            const idx = entryFaces.indexOf(face);
+            if (idx < entryFaces.length - 1) setFace(entryFaces[idx + 1]);
         }
     };
 
     const loadDemo = () => {
-        const demo = DEMOS[n as 2 | 3];
+        const demo = DEMOS[n];
         if (!demo) return;
-        const hexOf: Record<string, string> = {
-            f: COLORS.F, r: COLORS.R, u: COLORS.U,
-            d: COLORS.D, l: COLORS.L, b: COLORS.B,
-        };
+        const hexOf: Record<string, string> =
+            n === 'pyra'
+                ? { f: pyraHex('f'), r: pyraHex('r'), l: pyraHex('l'), d: pyraHex('d') }
+                : {
+                    f: COLORS.F, r: COLORS.R, u: COLORS.U,
+                    d: COLORS.D, l: COLORS.L, b: COLORS.B,
+                };
         const grids = {} as Record<FaceKey, string[]>;
-        FACE_ORDER.forEach((f, fi) => {
-            grids[f] = [...demo.slice(fi * cellCount, (fi + 1) * cellCount)].map((ch) => hexOf[ch]);
+        entryFaces.forEach((f, fi) => {
+            grids[f] = [...demo.state.slice(fi * cellCount, (fi + 1) * cellCount)].map((ch) => hexOf[ch]);
         });
-        setFaces(grids);
+        setFaces((prev) => ({ ...prev, ...grids }));
         setError(null);
         setBadFaces([]);
-        setFace('F');
+        setFace(entryFaces[0]);
+        setDemoMoves(demo.solution ?? null);
+        setDemoScramble(demo.scramble ?? null);
     };
 
+    const palette = isPyra ? PYRA_PALETTE : PALETTE;
     const counts = new Map<string, number>();
-    for (const f of FACE_ORDER) for (const c of faces[f]) counts.set(c, (counts.get(c) ?? 0) + 1);
-    const countProblems = PALETTE.filter((p) => (counts.get(p.hex) ?? 0) !== cellCount);
-    const solvableKind = n === 2 || n === 3;
-    const canSolve = countProblems.length === 0 && solvableKind;
+    for (const f of entryFaces) for (const c of faces[f]) counts.set(c, (counts.get(c) ?? 0) + 1);
+    const countProblems = palette.filter((p) => (counts.get(p.hex) ?? 0) !== cellCount);
+    const solvableKind = n === 2 || n === 3 || n === 'pyra';
+    // 4x4 has no general auto-solver yet: only the untouched demo (with
+    // known inverse moves) can play a graphical solution.
+    const canSolve =
+        (countProblems.length === 0 && solvableKind) ||
+        (n === 4 && countProblems.length === 0 && demoMoves !== null && demoScramble !== null);
 
     const doSolve = () => {
         setError(null);
         setBadFaces([]);
+        if (isPyra) {
+            const grids = {} as Record<PyraFaceKey, string[]>;
+            for (const f of PYRA_FACES) grids[f] = faces[f];
+            const bad = findBadPyra(grids);
+            if (bad) {
+                setError(
+                    `Impossible pyraminx: ${bad.message} ` +
+                    `Usually one face was entered with the wrong orientation (see the guide above the grid).`
+                );
+                setBadFaces(bad.faces);
+                return;
+            }
+            let state = '';
+            for (const f of PYRA_FACES) {
+                for (const hex of faces[f]) state += pyraLetter(hex);
+            }
+            router.push({ pathname: '/solve-pyra', params: { state } });
+            return;
+        }
+        if (n === 4) {
+            // No general 4x4 solver yet — only the untouched demo (with
+            // known scramble + inverse) can play. doSolve is unreachable
+            // otherwise because canSolve stays false.
+            if (!demoMoves || !demoScramble) {
+                setError('4×4 auto-solve is coming soon — scan & entry work, solution next.');
+                return;
+            }
+            let state = '';
+            for (const f of FACE_ORDER) {
+                for (const hex of faces[f]) state += stickerLetter(hex);
+            }
+            router.push({
+                pathname: '/solve',
+                params: { state, size: '4', solution: demoMoves, scramble: demoScramble },
+            });
+            return;
+        }
         // Local legality check first: tells exactly which piece is wrong.
         const bad = n === 2 ? findBadCorners2(faces) : findBadPieces(faces);
         if (bad) {
@@ -178,7 +377,7 @@ export default function PhysicalScreen() {
         router.push({ pathname: '/solve', params: { state, size: String(n) } });
     };
 
-    // --- camera: align face in the square, auto-detect its colors ---
+    // --- camera: align face in the guide, auto-detect its colors ---
     const takePhoto = async () => {
         if (!cameraRef.current || busy || !viewSize.w) return;
         setBusy(true);
@@ -186,10 +385,37 @@ export default function PhysicalScreen() {
         try {
             const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
             if (!photo?.uri || !photo.width || !photo.height) throw new Error('capture failed');
-            // Crop the overlay square out of the full photo, shrink to 30px/cell.
+            // Crop the overlay square out of the full photo.
             const crop = overlayToImageCrop(
                 photo.width, photo.height, viewSize.w, viewSize.h, sqX, sqY, squareSide
             );
+            if (isPyra) {
+                const S = 120;
+                const small = await manipulateAsync(
+                    photo.uri,
+                    [{ crop }, { resize: { width: S, height: S } }],
+                    { compress: 0.9, format: SaveFormat.JPEG }
+                );
+                const b64 = await readAsStringAsync(small.uri, { encoding: 'base64' });
+                const { data, width, height } = decodeJpegBase64(b64);
+                // Triangle inscribed in the square crop (matches overlay).
+                const hexes = detectPyra(data, width, height, {
+                    ax: S * 0.5, ay: S * 0.06,
+                    bx: S * 0.08, by: S * 0.9,
+                    cx: S * 0.92, cy: S * 0.9,
+                });
+                setFaces((prev) => ({ ...prev, [photoFace]: hexes }));
+                setPhotos((p) => ({ ...p, [photoFace]: small.uri }));
+                const nextScanned = { ...scanned, [photoFace]: true };
+                setScanned(nextScanned);
+                setError(null);
+                setBadFaces([]);
+                const order = PYRA_FACES;
+                const next = order.find((f) => !nextScanned[f]);
+                if (next) setPhotoFace(next);
+                return;
+            }
+            // Shrink square faces to 30px/cell (pyraminx returned above).
             const px = 30 * n;
             const small = await manipulateAsync(
                 photo.uri,
@@ -206,16 +432,17 @@ export default function PhysicalScreen() {
             setScanned(nextScanned);
             setError(null);
             setBadFaces([]);
+            setDemoMoves(null); setDemoScramble(null); // scanned over demo: known solution no longer valid
             const next = FACE_ORDER.find((f) => !nextScanned[f]);
             if (next) setPhotoFace(next);
         } catch {
-            setScanError('Could not read the colors — fill the square with the face, hold steady, use good light.');
+            setScanError('Could not read the colors — fill the guide with the face, hold steady, use good light.');
         } finally {
             setBusy(false);
         }
     };
-    const photoCount = FACE_ORDER.filter((f) => photos[f]).length;
-    const photosDone = photoCount === FACE_ORDER.length;
+    const photoCount = entryFaces.filter((f) => photos[f]).length;
+    const photosDone = photoCount === entryFaces.length;
 
     return (
         <SafeAreaView style={styles.safe}>
@@ -223,15 +450,21 @@ export default function PhysicalScreen() {
                 <View style={styles.modalWrap}>
                     <View style={styles.modalCard}>
                         <Text style={styles.modalTitle}>What cube are you solving?</Text>
-                        {([2, 3, 4] as CubeKind[]).map((t) => (
+                        {([2, 3, 4, 'pyra'] as CubeKind[]).map((t) => (
                             <Pressable
-                                key={t}
+                                key={String(t)}
                                 style={[styles.typeCard, cubeType === t && styles.typeCardActive]}
                                 onPress={() => pickType(t)}
                             >
                                 <Text style={styles.typeName}>{KIND_LABEL[t]}</Text>
                                 <Text style={styles.typeSub}>
-                                    {t === 2 ? 'Pocket cube • 8 corners' : t === 3 ? 'Classic • full solver' : 'Revenge • scan & entry'}
+                                    {t === 2
+                                        ? 'Pocket cube • 8 corners'
+                                        : t === 3
+                                            ? 'Classic • full solver'
+                                            : t === 4
+                                                ? 'Revenge • scan & entry'
+                                                : 'Pyraminx • triangle solver'}
                                 </Text>
                             </Pressable>
                         ))}
@@ -241,16 +474,24 @@ export default function PhysicalScreen() {
 
             <View style={styles.header}>
                 <Pressable style={styles.back} onPress={() => router.back()}>
-                    <Text style={styles.backText}>‹ Home</Text>
+                    <View style={styles.backRow}>
+                        <Ionicons name="chevron-back" size={20} color="#5eead4" />
+                        <Text style={styles.backText}>Home</Text>
+                    </View>
                 </Pressable>
                 <Text style={styles.title}>Physical solver</Text>
                 <Pressable style={styles.typeChip} onPress={() => setTypeOpen(true)}>
-                    <Text style={styles.typeChipText}>{KIND_LABEL[n]} ▾</Text>
+                    <View style={styles.backRow}>
+                        <Text style={styles.typeChipText}>{KIND_LABEL[n]}</Text>
+                        <Ionicons name="chevron-down" size={14} color="#5eead4" />
+                    </View>
                 </Pressable>
             </View>
 
             <Text style={styles.orient}>
-                {KIND_LABEL[n]} • standard scheme — WHITE on top, GREEN in front.
+                {isPyra
+                    ? 'Pyraminx • standard scheme — hold each face as guided below.'
+                    : `${KIND_LABEL[n]} • standard scheme — WHITE on top, GREEN in front.`}
             </Text>
 
             <View style={styles.tabs}>
@@ -261,7 +502,7 @@ export default function PhysicalScreen() {
                         onPress={() => setTab(t)}
                     >
                         <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>
-                            {t === 'manual' ? 'Enter colors' : `Camera (${photoCount}/6)`}
+                            {t === 'manual' ? 'Enter colors' : `Camera (${photoCount}/${entryFaces.length})`}
                         </Text>
                     </Pressable>
                 ))}
@@ -270,7 +511,7 @@ export default function PhysicalScreen() {
             {tab === 'manual' ? (
                 <ScrollView style={styles.body} contentContainerStyle={styles.bodyPad}>
                     <View style={styles.faceTabs}>
-                        {FACE_ORDER.map((f) => (
+                        {entryFaces.map((f) => (
                             <Pressable
                                 key={f}
                                 style={[
@@ -280,31 +521,51 @@ export default function PhysicalScreen() {
                                 ]}
                                 onPress={() => setFace(f)}
                             >
-                                <View style={[styles.dot, { backgroundColor: FACE_COLOR[f] }]} />
+                                <View
+                                    style={[
+                                        styles.dot,
+                                        {
+                                            backgroundColor: isPyra
+                                                ? PYRA_FACE_COLOR[f as PyraFaceKey]
+                                                : FACE_COLOR[f],
+                                        },
+                                    ]}
+                                />
                                 <Text style={styles.faceTabText}>{f}</Text>
                             </Pressable>
                         ))}
                     </View>
 
-                    <Text style={styles.faceName}>{FACE_NAME[face]} — top row first</Text>
-                    <Text style={styles.guide}>{FACE_GUIDE[face]}</Text>
-                    <View style={[styles.grid, { width: GRID_W }]}>
-                        {faces[face].map((hex, i) => (
-                            <Pressable
-                                key={i}
-                                style={[
-                                    styles.cell,
-                                    { backgroundColor: hex, width: cellSize, height: cellSize },
-                                    n === 3 && i === 4 && styles.cellLocked,
-                                ]}
-                                onPress={() => paintCell(i)}
-                            />
-                        ))}
-                    </View>
+                    <Text style={styles.faceName}>
+                        {isPyra ? PYRA_FACE_NAME[face as PyraFaceKey] : `${FACE_NAME[face]} — top row first`}
+                    </Text>
+                    <Text style={styles.guide}>
+                        {isPyra ? PYRA_GUIDE[face as PyraFaceKey] : FACE_GUIDE[face]}
+                    </Text>
+                    {isPyra ? (
+                        <PyraEntryGrid
+                            colors={faces[face]}
+                            onPaint={paintCell}
+                        />
+                    ) : (
+                        <View style={[styles.grid, { width: GRID_W }]}>
+                            {faces[face].map((hex, i) => (
+                                <Pressable
+                                    key={i}
+                                    style={[
+                                        styles.cell,
+                                        { backgroundColor: hex, width: cellSize, height: cellSize },
+                                        n === 3 && i === 4 && styles.cellLocked,
+                                    ]}
+                                    onPress={() => paintCell(i)}
+                                />
+                            ))}
+                        </View>
+                    )}
 
                     <Text style={styles.paletteLabel}>Paint color:</Text>
                     <View style={styles.palette}>
-                        {PALETTE.map((p) => (
+                        {palette.map((p) => (
                             <Pressable
                                 key={p.hex}
                                 style={[
@@ -321,12 +582,17 @@ export default function PhysicalScreen() {
 
                     {!canSolve && solvableKind && (
                         <Text style={styles.warn}>
-                            Counts: {PALETTE.map((p) => `${p.label}×${counts.get(p.hex) ?? 0}`).join('  ')} (need {cellCount} each)
+                            Counts: {palette.map((p) => `${p.label}×${counts.get(p.hex) ?? 0}`).join('  ')} (need {cellCount} each)
                         </Text>
                     )}
-                    {!solvableKind && (
+                    {n === 4 && !demoMoves && (
                         <Text style={styles.warn}>
-                            4×4 auto-solve is coming soon — scan & entry work, solution next.
+                            4×4 auto-solve is coming soon — load the demo below to watch a full solution.
+                        </Text>
+                    )}
+                    {n === 4 && demoMoves && (
+                        <Text style={styles.guide}>
+                            Demo scramble loaded — the solution is ready below.
                         </Text>
                     )}
 
@@ -335,11 +601,17 @@ export default function PhysicalScreen() {
                         disabled={!canSolve}
                         onPress={doSolve}
                     >
-                        <Text style={styles.solveText}>Get graphical solution ›</Text>
+                        <View style={styles.btnRow}>
+                            <Text style={styles.solveText}>Get graphical solution</Text>
+                            <Ionicons name="chevron-forward" size={18} color="#fff" />
+                        </View>
                     </Pressable>
-                    {solvableKind && (
+                    {(solvableKind || n === 4) && (
                         <Pressable style={styles.ghost} onPress={loadDemo}>
-                            <Text style={styles.ghostText}>New to this? Load a demo scramble ›</Text>
+                            <View style={styles.btnRow}>
+                                <Text style={styles.ghostText}>New to this? Load a demo scramble</Text>
+                                <Ionicons name="chevron-forward" size={16} color="#5eead4" />
+                            </View>
                         </Pressable>
                     )}
 
@@ -359,9 +631,15 @@ export default function PhysicalScreen() {
                     ) : (
                         <ScrollView style={styles.body} contentContainerStyle={styles.bodyPad}>
                             <Text style={styles.faceName}>
-                                Scan: {FACE_NAME[photoFace]} ({photoCount}/6)
+                                Scan:{' '}
+                                {isPyra
+                                    ? PYRA_FACE_NAME[photoFace as PyraFaceKey]
+                                    : FACE_NAME[photoFace]}{' '}
+                                ({photoCount}/{entryFaces.length})
                             </Text>
-                            <Text style={styles.guide}>{FACE_GUIDE[photoFace]}</Text>
+                            <Text style={styles.guide}>
+                                {isPyra ? PYRA_GUIDE[photoFace as PyraFaceKey] : FACE_GUIDE[photoFace]}
+                            </Text>
                             <View
                                 style={styles.cameraBox}
                                 onLayout={(e) => {
@@ -370,34 +648,42 @@ export default function PhysicalScreen() {
                                 }}
                             >
                                 <CameraView ref={cameraRef} style={styles.camera} facing="back" />
-                                {squareSide > 0 && (
-                                    <View
-                                        pointerEvents="none"
-                                        style={[
-                                            styles.overlay,
-                                            { left: sqX, top: sqY, width: squareSide, height: squareSide },
-                                        ]}
-                                    >
-                                        {Array.from({ length: n - 1 }, (_, k) => (
-                                            <View
-                                                key={`v${k}`}
-                                                style={[styles.overlayLineV, { left: `${((k + 1) / n) * 100}%` }]}
-                                            />
-                                        ))}
-                                        {Array.from({ length: n - 1 }, (_, k) => (
-                                            <View
-                                                key={`h${k}`}
-                                                style={[styles.overlayLineH, { top: `${((k + 1) / n) * 100}%` }]}
-                                            />
-                                        ))}
-                                        <Text style={styles.overlayLabel}>
-                                            Fit the {photoFace} face here
-                                        </Text>
-                                    </View>
-                                )}
+                                {squareSide > 0 &&
+                                    (isPyra ? (
+                                        <TriOutline
+                                            left={sqX}
+                                            top={sqY}
+                                            size={squareSide}
+                                            label={`Fit the ${photoFace} face here`}
+                                        />
+                                    ) : (
+                                        <View
+                                            pointerEvents="none"
+                                            style={[
+                                                styles.overlay,
+                                                { left: sqX, top: sqY, width: squareSide, height: squareSide },
+                                            ]}
+                                        >
+                                            {Array.from({ length: gridN - 1 }, (_, k) => (
+                                                <View
+                                                    key={`v${k}`}
+                                                    style={[styles.overlayLineV, { left: `${((k + 1) / gridN) * 100}%` }]}
+                                                />
+                                            ))}
+                                            {Array.from({ length: gridN - 1 }, (_, k) => (
+                                                <View
+                                                    key={`h${k}`}
+                                                    style={[styles.overlayLineH, { top: `${((k + 1) / gridN) * 100}%` }]}
+                                                />
+                                            ))}
+                                            <Text style={styles.overlayLabel}>
+                                                Fit the {photoFace} face here
+                                            </Text>
+                                        </View>
+                                    ))}
                             </View>
                             <View style={styles.thumbs}>
-                                {FACE_ORDER.map((f) => (
+                                {entryFaces.map((f) => (
                                     <Pressable key={f} onPress={() => setPhotoFace(f)}>
                                         <View style={[styles.thumb, photoFace === f && styles.thumbActive]}>
                                             {photos[f] ? (
@@ -405,7 +691,9 @@ export default function PhysicalScreen() {
                                             ) : (
                                                 <Text style={styles.thumbText}>{f}</Text>
                                             )}
-                                            {scanned[f] && <Text style={styles.thumbCheck}>✓</Text>}
+                                            {scanned[f] && (
+                                                <Ionicons name="checkmark" size={14} color="#2dd4bf" style={styles.thumbCheck} />
+                                            )}
                                         </View>
                                     </Pressable>
                                 ))}
@@ -416,22 +704,34 @@ export default function PhysicalScreen() {
                                 disabled={busy || photosDone}
                                 onPress={takePhoto}
                             >
-                                <Text style={styles.solveText}>
-                                    {photosDone
-                                        ? 'All 6 faces scanned ✓'
-                                        : busy
-                                          ? 'Reading colors…'
-                                          : `Scan ${photoFace} face`}
-                                </Text>
+                                {photosDone ? (
+                                    <View style={styles.btnRow}>
+                                        <Text style={styles.solveText}>
+                                            All {entryFaces.length} faces scanned
+                                        </Text>
+                                        <Ionicons name="checkmark" size={18} color="#fff" />
+                                    </View>
+                                ) : busy ? (
+                                    <Text style={styles.solveText}>Reading colors…</Text>
+                                ) : (
+                                    <View style={styles.btnRow}>
+                                        <Ionicons name="camera" size={18} color="#fff" />
+                                        <Text style={styles.solveText}>Scan {photoFace} face</Text>
+                                    </View>
+                                )}
                             </Pressable>
                             {photosDone ? (
                                 <Pressable style={styles.solve} onPress={() => setTab('manual')}>
-                                    <Text style={styles.solveText}>Review colors & solve ›</Text>
+                                    <View style={styles.btnRow}>
+                                        <Text style={styles.solveText}>Review colors & solve</Text>
+                                        <Ionicons name="chevron-forward" size={18} color="#fff" />
+                                    </View>
                                 </Pressable>
                             ) : (
                                 <Text style={styles.warn}>
-                                    Fill the square with one face at a time — colors are
-                                    detected automatically. Good light helps a lot.
+                                    {isPyra
+                                        ? 'Fit the triangle inside the outline — colors are detected automatically. Good light helps a lot.'
+                                        : 'Fill the square with one face at a time — colors are detected automatically. Good light helps a lot.'}
                                 </Text>
                             )}
                         </ScrollView>
@@ -446,6 +746,8 @@ const styles = StyleSheet.create({
     safe: { flex: 1, backgroundColor: '#0b0e17', paddingHorizontal: 16, gap: 10 },
     header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: 8 },
     back: { paddingVertical: 6, paddingRight: 8 },
+    backRow: { flexDirection: 'row', alignItems: 'center' },
+    btnRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
     backText: { color: '#5eead4', fontSize: 16, fontWeight: '700' },
     title: { color: '#f2f6ff', fontSize: 22, fontWeight: '800', flex: 1 },
     typeChip: {
@@ -496,7 +798,7 @@ const styles = StyleSheet.create({
     swatchText: { color: '#0b0e17', fontWeight: '800' },
     warn: { color: '#fbbf24', fontSize: 12, fontWeight: '600', lineHeight: 18 },
     error: { color: '#f87171', fontSize: 13, fontWeight: '600', lineHeight: 19 },
-    solve: { backgroundColor: '#3b82f6', borderRadius: 14, paddingVertical: 16, alignItems: 'center' },
+    solve: { backgroundColor: '#3b82f6', borderRadius: 14, paddingVertical: 16, alignItems: 'center', justifyContent: 'center' },
     solveText: { color: '#fff', fontSize: 16, fontWeight: '800' },
     disabled: { opacity: 0.45 },
     permBox: { gap: 12 },
@@ -526,6 +828,6 @@ const styles = StyleSheet.create({
         position: 'absolute', right: 2, bottom: 0,
         color: '#2dd4bf', fontSize: 14, fontWeight: '800',
     },
-    ghost: { alignItems: 'center', paddingVertical: 8 },
+    ghost: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 8 },
     ghostText: { color: '#5eead4', fontWeight: '700' },
 });

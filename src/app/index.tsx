@@ -1,3 +1,4 @@
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -18,14 +19,14 @@ export default function WelcomeScreen() {
 
             <View style={styles.options}>
                 <Pressable style={styles.card} onPress={() => router.push('/physical')}>
-                    <Text style={styles.cardIcon}>◉</Text>
+                    <Ionicons name="camera" size={30} color="#5eead4" />
                     <View>
                         <Text style={styles.cardTitle}>Physical Cube</Text>
                         <Text style={styles.cardSub}>Scan or enter colors, get steps</Text>
                     </View>
                 </Pressable>
                 <Pressable style={styles.card} onPress={() => router.push('/virtual')}>
-                    <Text style={styles.cardIcon}>▦</Text>
+                    <MaterialCommunityIcons name="cube-outline" size={30} color="#5eead4" />
                     <View>
                         <Text style={styles.cardTitle}>Virtual Cube</Text>
                         <Text style={styles.cardSub}>2x2 • 3x3 • 4x4 • Pyraminx</Text>
@@ -54,7 +55,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 14,
     },
-    cardIcon: { color: '#5eead4', fontSize: 30, fontWeight: '700' },
     cardTitle: { color: '#f2f6ff', fontSize: 20, fontWeight: '800' },
     cardSub: { color: '#7c8ab0', fontSize: 13, fontWeight: '600', marginTop: 2 },
 });
