@@ -2,7 +2,6 @@
 import { Canvas, useThree } from '@react-three/fiber/native';
 import { useEffect, useMemo, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useSharedValue } from 'react-native-reanimated';
 import * as THREE from 'three';
 import { LayerTurn, layerCoords } from '../cube/types';
@@ -11,6 +10,7 @@ import { CubieMesh } from './CubieMesh';
 import { OrbitRig } from './OrbitRig';
 import { computeLayerTurn, screenSwipeToWorld } from './swipeMath';
 import { TurningLayer } from './TurningLayer';
+import { usePanControls } from './panControls';
 
 interface Bridge {
     camera: THREE.Camera;
@@ -68,6 +68,9 @@ export function CubeScene({ onSwipeTurn, lockTurns = false }: Props) {
     useEffect(() => { activeRef.current = active; }, [active]);
     const lockRef = useRef(lockTurns || scrambling);
     useEffect(() => { lockRef.current = lockTurns || scrambling; }, [lockTurns, scrambling]);
+    // Stable callback ref so the memoized gesture never goes stale.
+    const onSwipeTurnRef = useRef(onSwipeTurn);
+    useEffect(() => { onSwipeTurnRef.current = onSwipeTurn; }, [onSwipeTurn]);
 
     const handleBegin = (x: number, y: number) => {
         // ⛔ Ignore new gestures while a turn is animating.
@@ -130,19 +133,20 @@ export function CubeScene({ onSwipeTurn, lockTurns = false }: Props) {
         const world = screenSwipeToWorld(tx, ty, point, normal, b.camera, b.size);
         if (world) {
             const turn = computeLayerTurn(normal, world, point, layers);
-            if (turn) onSwipeTurn(turn);
+            if (turn) onSwipeTurnRef.current(turn);
         }
 
         mode.current = 'idle';
         touch.current = null;
     };
 
-    const pan = Gesture.Pan()
-        .runOnJS(true)
-        .minDistance(4)
-        .onBegin((e) => handleBegin(e.x, e.y))
-        .onChange((e) => handleChange(e.changeX, e.changeY))
-        .onEnd((e) => handleEnd(e.translationX, e.translationY));
+    // RN-core responder (not gesture-handler): single-touch activation is
+    // unreliable for RNGH Pan on some Android builds. Created once.
+    const panHandlers = usePanControls({
+        onBegin: handleBegin,
+        onChange: handleChange,
+        onEnd: handleEnd,
+    });
 
     // Split cubies: those in the active layer (animated) vs the rest.
     const turningIds = new Set<number>();
@@ -155,9 +159,8 @@ export function CubeScene({ onSwipeTurn, lockTurns = false }: Props) {
     const turningCubies = cubies.filter((c) => turningIds.has(c.id));
 
     return (
-        <GestureDetector gesture={pan}>
-            <View style={StyleSheet.absoluteFill} collapsable={false}>
-                <Canvas camera={{ position: [5.5, 4.5, 5.5], fov: 42 }}>
+        <View style={StyleSheet.absoluteFill} collapsable={false} {...panHandlers}>
+            <Canvas camera={{ position: [5.5, 4.5, 5.5], fov: 42 }}>
                     <ContextBridge bridge={bridge} />
                     <ambientLight intensity={0.9} />
                     <directionalLight position={[6, 8, 5]} intensity={1.1} />
@@ -186,7 +189,6 @@ export function CubeScene({ onSwipeTurn, lockTurns = false }: Props) {
 
                     <OrbitRig theta={theta} phi={phi} radius={radius} />
                 </Canvas>
-            </View>
-        </GestureDetector>
+        </View>
     );
 }

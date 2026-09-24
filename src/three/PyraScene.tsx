@@ -2,12 +2,12 @@
 import { Canvas, useThree } from '@react-three/fiber/native';
 import { useEffect, useMemo, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useSharedValue } from 'react-native-reanimated';
 import * as THREE from 'three';
 import { homeLayout, PyraTurn, turnMembers, VERTICES } from '../pyraminx/geometry';
 import { usePyraStore } from '../pyraminx/pyraStore';
 import { OrbitRig } from './OrbitRig';
+import { usePanControls } from './panControls';
 import { PyraCore, PyraMesh } from './PyraMesh';
 import { PyraTurning } from './PyraTurning';
 
@@ -100,6 +100,9 @@ export function PyraScene({ onSwipeTurn, lockTurns = false }: Props) {
     useEffect(() => { lockRef.current = lockTurns || scrambling; }, [lockTurns, scrambling]);
     const stickersRef = useRef(stickers);
     useEffect(() => { stickersRef.current = stickers; }, [stickers]);
+    // Stable callback ref so the memoized gesture never goes stale.
+    const onSwipeTurnRef = useRef(onSwipeTurn);
+    useEffect(() => { onSwipeTurnRef.current = onSwipeTurn; }, [onSwipeTurn]);
 
     const handleBegin = (x: number, y: number) => {
         if (activeRef.current !== null) {
@@ -155,18 +158,19 @@ export function PyraScene({ onSwipeTurn, lockTurns = false }: Props) {
         const { point, normal } = touch.current;
         const world = swipeToWorld(tx, ty, point, normal, b.camera, b.size);
         if (world) {
-            onSwipeTurn(computePyraTurn(world, point, tipThresh));
+            onSwipeTurnRef.current(computePyraTurn(world, point, tipThresh));
         }
         mode.current = 'idle';
         touch.current = null;
     };
 
-    const pan = Gesture.Pan()
-        .runOnJS(true)
-        .minDistance(4)
-        .onBegin((e) => handleBegin(e.x, e.y))
-        .onChange((e) => handleChange(e.changeX, e.changeY))
-        .onEnd((e) => handleEnd(e.translationX, e.translationY));
+    // RN-core responder (not gesture-handler): single-touch activation is
+    // unreliable for RNGH Pan on some Android builds. Created once.
+    const panHandlers = usePanControls({
+        onBegin: handleBegin,
+        onChange: handleChange,
+        onEnd: handleEnd,
+    });
 
     const turningIds = useMemo(() => {
         const set = new Set<number>();
@@ -179,9 +183,8 @@ export function PyraScene({ onSwipeTurn, lockTurns = false }: Props) {
     const turningStickers = stickers.filter((s) => turningIds.has(s.id));
 
     return (
-        <GestureDetector gesture={pan}>
-            <View style={StyleSheet.absoluteFill} collapsable={false}>
-                <Canvas camera={{ position: [0, 2.2, 7.6], fov: 40 }}>
+        <View style={StyleSheet.absoluteFill} collapsable={false} {...panHandlers}>
+            <Canvas camera={{ position: [0, 2.2, 7.6], fov: 40 }}>
                     <ContextBridge bridge={bridge} />
                     <ambientLight intensity={0.45} />
                     <hemisphereLight args={['#cdd8ff', '#14161f', 0.55]} />
@@ -207,7 +210,6 @@ export function PyraScene({ onSwipeTurn, lockTurns = false }: Props) {
 
                     <OrbitRig theta={theta} phi={phi} radius={radius} />
                 </Canvas>
-            </View>
-        </GestureDetector>
+        </View>
     );
 }

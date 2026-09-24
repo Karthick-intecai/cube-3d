@@ -13,7 +13,17 @@ export default function TabLayout() {
     <GestureHandlerRootView>
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
         <AnimatedSplashOverlay />
-        <Stack screenOptions={{ headerShown: false }} />
+        <Stack screenOptions={{ headerShown: false }}>
+          {/*
+            Full-screen gesture canvases: a left-to-right drag must turn /
+            orbit the puzzle, never pop the navigation stack. The native
+            iOS back-swipe is therefore off here (header back buttons stay).
+          */}
+          <Stack.Screen name="play" options={{ gestureEnabled: false }} />
+          <Stack.Screen name="pyraminx" options={{ gestureEnabled: false }} />
+          <Stack.Screen name="solve" options={{ gestureEnabled: false }} />
+          <Stack.Screen name="solve-pyra" options={{ gestureEnabled: false }} />
+        </Stack>
       </ThemeProvider>
     </GestureHandlerRootView>
   );

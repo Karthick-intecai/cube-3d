@@ -4,10 +4,10 @@
 import { Canvas } from '@react-three/fiber/native';
 import { useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useSharedValue } from 'react-native-reanimated';
 import { PyraSticker, PyraTurn, turnMembers } from '../pyraminx/geometry';
 import { OrbitRig } from './OrbitRig';
+import { usePanControls } from './panControls';
 import { PyraCore, PyraMesh } from './PyraMesh';
 import { PyraTurning } from './PyraTurning';
 
@@ -29,13 +29,14 @@ export function PyraSolutionScene({ stickers, active, durationMs = 300, onDone }
         radius.value = 7.4;
     }, [theta, phi, radius]);
 
-    const pan = Gesture.Pan()
-        .runOnJS(true)
-        .minDistance(4)
-        .onChange((e) => {
-            theta.value -= e.changeX * 0.01;
-            phi.value = Math.max(0.15, Math.min(Math.PI - 0.15, phi.value - e.changeY * 0.01));
-        });
+    const panHandlers = usePanControls({
+        onBegin: () => { },
+        onChange: (dx, dy) => {
+            theta.value -= dx * 0.01;
+            phi.value = Math.max(0.15, Math.min(Math.PI - 0.15, phi.value - dy * 0.01));
+        },
+        onEnd: () => { },
+    });
 
     const turningIds = new Set<number>();
     if (active) {
@@ -45,9 +46,8 @@ export function PyraSolutionScene({ stickers, active, durationMs = 300, onDone }
     const turningStickers = stickers.filter((s) => turningIds.has(s.id));
 
     return (
-        <GestureDetector gesture={pan}>
-            <View style={StyleSheet.absoluteFill} collapsable={false}>
-                <Canvas camera={{ position: [0, 2.0, 7.4], fov: 40 }}>
+        <View style={StyleSheet.absoluteFill} collapsable={false} {...panHandlers}>
+            <Canvas camera={{ position: [0, 2.0, 7.4], fov: 40 }}>
                     <ambientLight intensity={0.45} />
                     <hemisphereLight args={['#cdd8ff', '#14161f', 0.55]} />
                     <directionalLight position={[6, 8, 5]} intensity={1.6} />
@@ -72,7 +72,6 @@ export function PyraSolutionScene({ stickers, active, durationMs = 300, onDone }
 
                     <OrbitRig theta={theta} phi={phi} radius={radius} />
                 </Canvas>
-            </View>
-        </GestureDetector>
+        </View>
     );
 }
